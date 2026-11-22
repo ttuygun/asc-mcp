@@ -174,6 +174,57 @@ struct AppLifecycleWorkerContractTests {
         #expect(await transport.requestCount() == 0)
     }
 
+    @Test("review details create follows a null related-resource lookup")
+    func reviewDetailsCreateAfterNullData() async throws {
+        let transport = TestHTTPTransport(responses: [
+            .init(statusCode: 200, body: #"{"data":null,"links":{"self":"https://api.appstoreconnect.apple.com/v1/appStoreVersions/ver-3/appStoreReviewDetail"}}"#),
+            .init(statusCode: 200, body: #"{"data":{"type":"appStoreVersions","id":"ver-3","attributes":{"versionString":"1.0"}}}"#),
+            .init(statusCode: 201, body: #"{"data":{"type":"appStoreReviewDetails","id":"review-3","attributes":{"notes":"Hello reviewer"}}}"#)
+        ])
+        let worker = try await makeContractWorker(transport: transport)
+
+        let result = try await worker.handleTool(CallTool.Parameters(
+            name: "app_versions_set_review_details",
+            arguments: [
+                "version_id": .string("ver-3"),
+                "notes": .string("Hello reviewer")
+            ]
+        ))
+
+        #expect(result.isError != true)
+        let requests = await transport.recordedRequests()
+        #expect(requests.map { $0.httpMethod ?? "" } == ["GET", "GET", "POST"])
+        #expect(requests[0].url?.path == "/v1/appStoreVersions/ver-3/appStoreReviewDetail")
+        #expect(requests[1].url?.path == "/v1/appStoreVersions/ver-3")
+        #expect(requests[2].url?.path == "/v1/appStoreReviewDetails")
+        let body = try #require(await transport.recordedBodyStrings().last)
+        let bodyObject = try #require(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        let data = try #require(bodyObject["data"] as? [String: Any])
+        let attributes = try #require(data["attributes"] as? [String: Any])
+        #expect(attributes.count == 1)
+        #expect(attributes["notes"] as? String == "Hello reviewer")
+    }
+
+    @Test("review details null lookup still validates the parent version")
+    func reviewDetailsNullDataRejectsMismatchedParent() async throws {
+        let transport = TestHTTPTransport(responses: [
+            .init(statusCode: 200, body: #"{"data":null}"#),
+            .init(statusCode: 200, body: #"{"data":{"type":"appStoreVersions","id":"ver-other","attributes":{"versionString":"1.0"}}}"#)
+        ])
+        let worker = try await makeContractWorker(transport: transport)
+
+        let result = try await worker.handleTool(CallTool.Parameters(
+            name: "app_versions_set_review_details",
+            arguments: [
+                "version_id": .string("ver-3"),
+                "notes": .string("Hello reviewer")
+            ]
+        ))
+
+        #expect(result.isError == true)
+        #expect(await transport.recordedRequests().map { $0.httpMethod ?? "" } == ["GET", "GET"])
+    }
+
     @Test("review details create follows a not found related-resource lookup")
     func reviewDetailsCreateAfterNotFound() async throws {
         let transport = TestHTTPTransport(responses: [

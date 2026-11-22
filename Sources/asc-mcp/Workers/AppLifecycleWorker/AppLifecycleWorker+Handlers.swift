@@ -1772,39 +1772,49 @@ private extension AppLifecycleWorker {
                     "fields[appStoreReviewDetails]": "appStoreVersion",
                     "include": "appStoreVersion"
                 ],
-                as: SingleResourceResponse.self
+                as: OptionalSingleResourceResponse.self
             )
+            // Apple answers this to-one lookup with `{"data": null}` when the version has
+            // no review detail yet, so a missing resource means "create", like a 404.
+            guard let resource = response.data else {
+                return try await confirmReviewDetailParent(versionId: versionId)
+            }
             try validateSingleResource(
-                response.data,
+                resource,
                 expectedType: "appStoreReviewDetails",
                 context: "review detail lookup"
             )
             _ = try validatedSingleRelationshipID(
-                response.data.relationships,
+                resource.relationships,
                 name: "appStoreVersion",
                 expectedType: "appStoreVersions",
                 expectedID: versionId,
                 context: "review detail parent linkage"
             )
-            return response.data.id
+            return resource.id
         } catch let error as ASCError {
             switch error {
             case .api(_, 404), .apiResponse(_, 404):
-                let versionResponse = try await httpClient.get(
-                    "/v1/appStoreVersions/\(try ASCPathSegment.encode(versionId))",
-                    parameters: ["fields[appStoreVersions]": "versionString"],
-                    as: ASCAppStoreVersionResponse.self
-                )
-                try validateVersionResource(
-                    versionResponse.data,
-                    expectedID: versionId,
-                    context: "review detail parent lookup"
-                )
-                return nil
+                return try await confirmReviewDetailParent(versionId: versionId)
             default:
                 throw error
             }
         }
+    }
+
+    /// Proves the parent version exists before a review detail is created for it.
+    func confirmReviewDetailParent(versionId: String) async throws -> String? {
+        let versionResponse = try await httpClient.get(
+            "/v1/appStoreVersions/\(try ASCPathSegment.encode(versionId))",
+            parameters: ["fields[appStoreVersions]": "versionString"],
+            as: ASCAppStoreVersionResponse.self
+        )
+        try validateVersionResource(
+            versionResponse.data,
+            expectedID: versionId,
+            context: "review detail parent lookup"
+        )
+        return nil
     }
 
     func selectAppInfo(from appInfos: [ASCAppInfo], versionState: String?) -> ASCAppInfo? {

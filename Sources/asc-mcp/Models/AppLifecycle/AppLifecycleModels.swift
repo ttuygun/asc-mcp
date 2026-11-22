@@ -425,6 +425,11 @@ struct SingleResourceResponse: Codable, Sendable {
     }
 }
 
+/// Single-resource response whose `data` may be `null`, as Apple returns for an empty to-one relationship.
+struct OptionalSingleResourceResponse: Codable, Sendable {
+    let data: SingleResourceResponse.ResourceData?
+}
+
 /// Type-erased JSON value for passthrough responses
 public enum JSONValue: Codable, Sendable {
     case string(String)
